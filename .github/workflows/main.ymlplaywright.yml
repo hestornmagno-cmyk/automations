@@ -1,0 +1,298 @@
+name: QA ExperIA Playwright Suite
+run-name: QA ExperIA Automation Run (${{ github.sha }})
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  playwright-tests:
+    name: Execute SauceDemo E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Scaffold Test Automation Package
+        run: |
+          mkdir -p pages tests fixtures .github/workflows
+          
+          cat << 'EOF' > package.json
+          {
+            "name": "qaexperia-saucedemo-automation",
+            "version": "1.0.0",
+            "description": "ZeroIDE QA Automation for SauceDemo (QA-793)",
+            "scripts": {
+              "test": "playwright test"
+            },
+            "devDependencies": {
+              "@playwright/test": "^1.50.0",
+              "@types/node": "^22.0.0",
+              "typescript": "^5.0.0"
+            }
+          }
+          EOF
+
+          cat << 'EOF' > playwright.config.ts
+          import { defineConfig, devices } from '@playwright/test';
+
+          export default defineConfig({
+            testDir: './tests',
+            fullyParallel: false,
+            workers: 1,
+            retries: 0,
+            timeout: 30000,
+            use: {
+              baseURL: 'https://www.saucedemo.com',
+              testIdAttribute: 'data-test',
+              trace: 'on-first-retry',
+              screenshot: 'only-on-failure',
+            },
+            projects: [
+              {
+                name: 'chromium',
+                use: { ...devices['Desktop Chrome'] },
+              },
+            ],
+            reporter: [['list'], ['html', { open: 'never' }]],
+          });
+          EOF
+
+          cat << 'EOF' > pages/LoginPage.ts
+          import { Page, Locator, expect } from '@playwright/test';
+
+          export class LoginPage {
+            readonly page: Page;
+            readonly usernameInput: Locator;
+            readonly passwordInput: Locator;
+            readonly loginButton: Locator;
+            readonly errorMessage: Locator;
+            readonly logo: Locator;
+
+            constructor(page: Page) {
+              this.page = page;
+              this.usernameInput = page.locator('#user-name, [data-test="username"]').first();
+              this.passwordInput = page.locator('#password, [data-test="password"]').first();
+              this.loginButton = page.locator('#login-button, [data-test="login-button"]').first();
+              this.errorMessage = page.locator('[data-test="error"]').first();
+              this.logo = page.locator('.login_logo').first();
+            }
+
+            async navigate() {
+              await this.page.goto('https://www.saucedemo.com');
+            }
+
+            async navigateToInventoryDirectly() {
+              await this.page.goto('https://www.saucedemo.com/inventory.html');
+            }
+
+            async fillUsername(username: string) {
+              await this.usernameInput.fill(username);
+            }
+
+            async fillPassword(password: string) {
+              await this.passwordInput.fill(password);
+            }
+
+            async clickLogin() {
+              await this.loginButton.click();
+            }
+
+            async expectOnLoginPage() {
+              await expect(this.page).toHaveURL(/https:\/\/www\.saucedemo\.com\/?$/);
+              await expect(this.loginButton).toBeVisible();
+            }
+
+            async expectStillOnLoginPage() {
+              await expect(this.page).toHaveURL(/https:\/\/www\.saucedemo\.com\/?$/);
+              await expect(this.loginButton).toBeVisible();
+            }
+
+            async expectErrorMessage(message: string) {
+              await expect(this.errorMessage).toBeVisible();
+              await expect(this.errorMessage).toContainText(message);
+            }
+
+            async expectLoginFormEmpty() {
+              await expect(this.usernameInput).toBeVisible();
+              await expect(this.passwordInput).toBeVisible();
+              await expect(this.usernameInput).toHaveValue('');
+              await expect(this.passwordInput).toHaveValue('');
+            }
+          }
+          EOF
+
+          cat << 'EOF' > pages/InventoryPage.ts
+          import { Page, Locator, expect } from '@playwright/test';
+
+          export class InventoryPage {
+            readonly page: Page;
+            readonly productsTitle: Locator;
+            readonly inventoryList: Locator;
+            readonly firstProductName: Locator;
+            readonly addToCartButton: Locator;
+            readonly shoppingCartLink: Locator;
+            readonly openMenuButton: Locator;
+            readonly logoutLink: Locator;
+
+            constructor(page: Page) {
+              this.page = page;
+              this.productsTitle = page.locator('[data-test="title"]').first();
+              this.inventoryList = page.locator('[data-test="inventory-list"]').first();
+              this.firstProductName = page.locator('[data-test="inventory-item-name"]').first();
+              this.addToCartButton = page.locator('#add-to-cart-sauce-labs-backpack, [data-test="add-to-cart-sauce-labs-backpack"]').first();
+              this.shoppingCartLink = page.locator('.shopping_cart_link, [data-test="shopping-cart-link"]').first();
+              this.openMenuButton = page.locator('#react-burger-menu-btn, [data-test="open-menu"]').first();
+              this.logoutLink = page.locator('#logout_sidebar_link, [data-test="logout-sidebar-link"]').first();
+            }
+
+            async expectOnInventoryPage() {
+              await expect(this.page).toHaveURL(/https:\/\/www\.saucedemo\.com\/inventory\.html$/);
+              await expect(this.productsTitle).toBeVisible();
+              await expect(this.productsTitle).toHaveText('Products');
+            }
+
+            async expectProductsVisible() {
+              await expect(this.inventoryList).toBeVisible();
+              const count = await this.inventoryList.locator('[data-test="inventory-item-name"]').count();
+              expect(count).toBeGreaterThanOrEqual(1);
+              await expect(this.firstProductName).toBeVisible();
+            }
+
+            async openMenu() {
+              await this.openMenuButton.click();
+              await expect(this.logoutLink).toBeVisible();
+            }
+
+            async clickLogout() {
+              await this.logoutLink.click();
+            }
+          }
+          EOF
+
+          cat << 'EOF' > tests/LoginPage.spec.ts
+          import { test, expect } from '@playwright/test';
+          import { LoginPage } from '../pages/LoginPage';
+          import { InventoryPage } from '../pages/InventoryPage';
+
+          test.describe('Fluxo de Login e Navegacao SauceDemo - LoginPage', () => {
+            test('Login com standard_user e visualizacao da vitrine de produtos em /inventory.html', async ({ page }) => {
+              const loginPage = new LoginPage(page);
+              const inventoryPage = new InventoryPage(page);
+              await loginPage.navigate();
+              await loginPage.fillUsername('standard_user');
+              await loginPage.fillPassword('secret_sauce');
+              await loginPage.clickLogin();
+              await inventoryPage.expectOnInventoryPage();
+              await inventoryPage.expectProductsVisible();
+            });
+
+            test('Tentativa de login com credenciais invalidas ou campos vazios', async ({ page }) => {
+              const loginPage = new LoginPage(page);
+              const cases = [
+                { usuario: 'standard_user', senha: 'senha_incorreta', mensagem: 'Epic sadface: Username and password do not match any user in this service' },
+                { usuario: 'usuario_inexistente', senha: 'secret_sauce', mensagem: 'Epic sadface: Username and password do not match any user in this service' },
+                { usuario: '', senha: 'secret_sauce', mensagem: 'Epic sadface: Username is required' },
+                { usuario: 'standard_user', senha: '', mensagem: 'Epic sadface: Password is required' },
+              ];
+              for (const c of cases) {
+                await loginPage.navigate();
+                await loginPage.fillUsername(c.usuario);
+                await loginPage.fillPassword(c.senha);
+                await loginPage.clickLogin();
+                await loginPage.expectStillOnLoginPage();
+                await loginPage.expectErrorMessage(c.mensagem);
+              }
+            });
+
+            test('Logout apos login e retorno a pagina de login', async ({ page }) => {
+              const loginPage = new LoginPage(page);
+              const inventoryPage = new InventoryPage(page);
+              await loginPage.navigate();
+              await loginPage.fillUsername('standard_user');
+              await loginPage.fillPassword('secret_sauce');
+              await loginPage.clickLogin();
+              await inventoryPage.expectOnInventoryPage();
+              await inventoryPage.openMenu();
+              await inventoryPage.clickLogout();
+              await loginPage.expectOnLoginPage();
+              await loginPage.expectLoginFormEmpty();
+            });
+
+            test('Acesso direto a URL da vitrine sem autenticacao e bloqueado', async ({ page }) => {
+              const loginPage = new LoginPage(page);
+              await loginPage.navigateToInventoryDirectly();
+              await loginPage.expectOnLoginPage();
+              await loginPage.expectErrorMessage("Epic sadface: You can only access '/inventory.html' when you are logged in.");
+            });
+          });
+          EOF
+
+          cat << 'EOF' > tests/InventoryPage.spec.ts
+          import { test, expect } from '@playwright/test';
+          import { LoginPage } from '../pages/LoginPage';
+          import { InventoryPage } from '../pages/InventoryPage';
+
+          test.describe('Fluxo de Login e Navegacao SauceDemo - InventoryPage', () => {
+            test('Login com standard_user e visualizacao da vitrine de produtos em /inventory.html', async ({ page }) => {
+              const loginPage = new LoginPage(page);
+              const inventoryPage = new InventoryPage(page);
+              await loginPage.navigate();
+              await loginPage.fillUsername('standard_user');
+              await loginPage.fillPassword('secret_sauce');
+              await loginPage.clickLogin();
+              await inventoryPage.expectOnInventoryPage();
+              await inventoryPage.expectProductsVisible();
+            });
+
+            test('Logout apos login e retorno a pagina de login', async ({ page }) => {
+              const loginPage = new LoginPage(page);
+              const inventoryPage = new InventoryPage(page);
+              await loginPage.navigate();
+              await loginPage.fillUsername('standard_user');
+              await loginPage.fillPassword('secret_sauce');
+              await loginPage.clickLogin();
+              await inventoryPage.expectOnInventoryPage();
+              await inventoryPage.openMenu();
+              await inventoryPage.clickLogout();
+              await loginPage.expectOnLoginPage();
+              await loginPage.expectLoginFormEmpty();
+            });
+          });
+          EOF
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright Tests
+        run: npx playwright test
+
+      - name: Commit Automation Files to Repository
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json playwright.config.ts pages/ tests/
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: persist generated Playwright test suite for QA-793 [skip ci]" && git push origin main)
+
+      - name: Upload Playwright Test Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
